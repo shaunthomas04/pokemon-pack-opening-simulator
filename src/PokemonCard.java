@@ -41,6 +41,9 @@ public class PokemonCard {
     private int     holoProg, shadowProg, flatProg;
     private int     vaoQuad;
     private int     texCard, texPack, texBack;
+    private int[] cardTextures;          // all loaded card images
+    private int[] deck = new int[CARD_COUNT]; // current pack (10 cards)
+
 
     private double  mouseX, mouseY;
     private boolean clickConsumed = false;
@@ -90,7 +93,7 @@ public class PokemonCard {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_SAMPLES, 4);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        window = glfwCreateWindow(WIN_W, WIN_H, "Pokémon Pack Opening", NULL, NULL);
+        window = glfwCreateWindow(WIN_W, WIN_H, "Pokemon Pack Opening", NULL, NULL);
         if (window == NULL) throw new RuntimeException("Failed to create window");
         glfwSetCursorPosCallback(window, (w, x, y) -> { mouseX = x; mouseY = y; });
         glfwSetMouseButtonCallback(window, (w, btn, action, mods) -> {
@@ -115,8 +118,10 @@ public class PokemonCard {
         glEnable(GL_MULTISAMPLE);
         buildShaders();
         buildQuad();
-        texCard = loadTexture("pokemon_card.jpg");
-        texPack = loadTexture("card_pack.jpg");
+//        texCard = loadTexture("pokemon_card.jpg");
+        cardTextures = loadAllCardTextures("cards");
+        generateRandomDeck();
+        texPack = loadTexture("packs/prismatic_evolutions.jpg");
         texBack = loadTexture("back_card.jpg");
     }
 
@@ -153,6 +158,7 @@ public class PokemonCard {
                 packVz += az*dt; packZ += packVz*dt;
                 if (clicked && packHovered) {
                     clickConsumed = true;
+                    generateRandomDeck();
                     state = ST_OPENING;
                     stateTimer = 0f;
                     openT = 0f; tearY = 0f; packShakeX = 0f; packAlpha = 1f;
@@ -251,6 +257,31 @@ public class PokemonCard {
         }
     }
 
+    private int[] loadAllCardTextures(String folderPath) {
+        java.io.File folder = new java.io.File(folderPath);
+        java.io.File[] files = folder.listFiles((dir, name) ->
+                name.endsWith(".png") || name.endsWith(".jpg"));
+
+        if (files == null || files.length == 0) {
+            throw new RuntimeException("No images found in /cards");
+        }
+
+        int[] textures = new int[files.length];
+
+        for (int i = 0; i < files.length; i++) {
+            textures[i] = loadTexture(files[i].getAbsolutePath());
+        }
+
+        return textures;
+    }
+
+    private void generateRandomDeck() {
+        java.util.Random rand = new java.util.Random();
+        for (int i = 0; i < CARD_COUNT; i++) {
+            deck[i] = cardTextures[rand.nextInt(cardTextures.length)];
+        }
+    }
+
     private void render() {
         glClearColor(0.06f, 0.06f, 0.10f, 1f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -322,14 +353,15 @@ public class PokemonCard {
     private void renderFlip(float[] proj, float[] view) {
         float flipAngle = lerp(180f, 0f, ease(deckFlipT));
         boolean showFront = flipAngle < 90f;
-        int tex = showFront ? texCard : texBack;
+//        int tex = showFront ? texCard : texBack;
+        int tex = showFront ? deck[0] : texBack;
         // Draw back cards of stack first (they don't flip, just peek)
         for (int i = Math.min(CARD_COUNT - 1, 4); i >= 1; i--) {
             float offX = i * 0.012f;
             float offY = -i * 0.008f;
             float offZ = CARD_Z_REST - i * 0.005f;
             float[] model = makeCardModel(offX, offY, offZ, 0f, flipAngle);
-            int deckTex = flipAngle < 90f ? texCard : texBack;
+            int deckTex = flipAngle < 90f ? deck[i] : texBack;
             drawHolo(proj, view, model, CARD_W, CARD_H, deckTex, 0f, 0f, 0f, 1f, 0.045f);
         }
         // Draw top card
@@ -353,7 +385,7 @@ public class PokemonCard {
             float offY = -tiltX * 0.001f * i;
             float offZ = cardZ - i * 0.005f;
             float[] model = makeCardModel(offX, offY, offZ, tiltX, tiltY);
-            drawHolo(proj, view, model, CARD_W, CARD_H, texCard, 0f, 0f, 0f, 1f, 0.045f);
+            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i], 0f, 0f, 0f, 1f, 0.045f);
         }
 
         // Top card — dismiss animation or normal interactive tilt
@@ -364,10 +396,10 @@ public class PokemonCard {
             float dz = cardZ + et * 0.3f;
             float dr = dismissDX * et * 35f;
             float[] model = makeCardModel(dx, dy, dz, tiltX * (1f-et), tiltY * (1f-et) + dr);
-            drawHolo(proj, view, model, CARD_W, CARD_H, texCard, 0f, 0f, 0f, 1f - et, 0.045f);
+            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard], 0f, 0f, 0f, 1f - et, 0.045f);
         } else {
             float[] model = makeCardModel(0f, 0f, cardZ, tiltX, tiltY);
-            drawHolo(proj, view, model, CARD_W, CARD_H, texCard,
+            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     tiltX / MAX_TILT, tiltY / MAX_TILT, cardHovered ? 1f : 0f, 1f, 0.045f);
         }
     }
