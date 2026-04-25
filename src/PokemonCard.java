@@ -115,6 +115,7 @@ public class PokemonCard {
     private float   dismissDX  = 0f;
 
     private float   waitTimer  = 0f;
+    private float   packFadeIn = 0f;
 
     public static void main(String[] a) { new PokemonCard().run(); }
     private void run() { init(); loop(); cleanup(); }
@@ -206,32 +207,35 @@ public class PokemonCard {
     private float screenNX() { return (float)(mouseX / WIN_W) * 2f - 1f; }
     private float screenNY() { return -((float)(mouseY / WIN_H) * 2f - 1f); }
 
-    private float worldToNDCX(float wx) {
+    private float worldToNDCX(float wx, float wz) {
         float aspect = (float) WIN_W / WIN_H;
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return wx / (-PACK_Z) * (f / aspect);
+        return wx / (-wz) * (f / aspect);
     }
 
-    private float worldToNDCY(float wy) {
+    private float worldToNDCY(float wy, float wz) {
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return wy / (-PACK_Z) * f;
+        return wy / (-wz) * f;
     }
 
-    private float packHalfW() {
+    private float packHalfW(float wz) {
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return PACK_W / 2f / (-PACK_Z) * f / ((float) WIN_W / WIN_H);
+        return PACK_W / 2f / (-wz) * f / ((float) WIN_W / WIN_H);
     }
 
-    private float packHalfH() {
+    private float packHalfH(float wz) {
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return PACK_H / 2f / (-PACK_Z) * f;
+        return PACK_H / 2f / (-wz) * f;
     }
 
     private boolean isPackHovered(int i) {
         float nx = screenNX(), ny = screenNY();
-        float cx = worldToNDCX(PACK_X[i]);
-        float cy = worldToNDCY(PACK_Y[i]);
-        return Math.abs(nx - cx) < packHalfW() && Math.abs(ny - cy) < packHalfH();
+        float wz = packZArr[i];  // use actual current Z, not constant PACK_Z
+        float cx = worldToNDCX(PACK_X[i], wz);
+        float cy = worldToNDCY(PACK_Y[i], wz);
+        float hw = packHalfW(wz);
+        float hh = packHalfH(wz);
+        return Math.abs(nx - cx) < hw && Math.abs(ny - cy) < hh;
     }
 
     private void resetPackState() {
@@ -370,12 +374,16 @@ public class PokemonCard {
                 break;
             }
             case ST_WAIT: {
-                // Render nothing — just wait a moment then snap back
                 waitTimer += dt;
-                if (waitTimer >= 1.2f) {
+                // blank screen for 0.4s, then fade packs in over 0.8s
+                float fadeStart = 0.4f;
+                float fadeDur   = 0.8f;
+                packFadeIn = Math.max(0f, Math.min((waitTimer - fadeStart) / fadeDur, 1f));
+                if (waitTimer >= fadeStart + fadeDur) {
                     state = ST_PACK;
                     stateTimer = 0f;
                     waitTimer  = 0f;
+                    packFadeIn = 0f;
                     activePack = -1;
                     resetPackState();
                     tiltX = tiltY = vtiltX = vtiltY = 0f;
@@ -420,12 +428,24 @@ public class PokemonCard {
             case ST_DEAL    -> renderDeal(proj, view);
             case ST_FLIP    -> renderFlip(proj, view);
             case ST_CARDS   -> renderCards(proj, view);
-            case ST_WAIT    -> {} // render nothing — blank screen briefly before packs return
+            case ST_WAIT -> { if (packFadeIn > 0f) renderAllPacksFaded(proj, view, packFadeIn); }
         }
     }
 
     private void renderAllPacks(float[] proj, float[] view) {
         for (int i = 0; i < PACK_COUNT; i++) renderOnePack(proj, view, i, 1f);
+    }
+
+    private void renderAllPacksFaded(float[] proj, float[] view, float alpha) {
+        for (int i = 0; i < PACK_COUNT; i++) {
+            if (alpha <= 0f) return;
+            float tX = 0f, tY = 0f, pz = PACK_Z;
+            float[] model = makeCardModel(PACK_X[i], PACK_Y[i], pz, tX, tY);
+            drawShadow(proj, view, PACK_X[i], PACK_Y[i] - 0.08f, PACK_Z - 0.3f,
+                    PACK_W * 1.2f, PACK_H * 1.05f, 0.38f * alpha);
+            drawHolo(proj, view, model, PACK_W, PACK_H, texPacks[i],
+                    0f, 0f, 0f, alpha, 0.04f, RARITY_PACK);
+        }
     }
 
     private void renderOnePack(float[] proj, float[] view, int i, float alpha) {
