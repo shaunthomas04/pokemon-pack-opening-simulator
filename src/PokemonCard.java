@@ -40,15 +40,36 @@ public class PokemonCard {
 
     private static final float[] PACK_X = { -1.3f, 0.0f, 1.3f,  -1.3f, 0.0f, 1.3f };
     private static final float[] PACK_Y = {  0.75f, 0.75f, 0.75f, -0.75f, -0.75f, -0.75f };
+    private static final int[]   PACK_RARITY = { 1, 1, 1, 1, 1, 1 };
+
+    private static final int[]   PACK_CARD_RARITY = {
+            0, // chaos_rising        → cards are COMMON
+            1, // ascended_heroes     → cards are UNCOMMON
+            2, // phantasmal_flames   → cards are RARE
+            3, // mega_evolution      → cards are ULTRA_RARE
+            4, // destined_rivals     → cards are ILLUS_RARE
+            6  // prismatic_evolutions→ cards are HYPER
+    };
+
+    private static final int RARITY_COMMON     = 0;
+    private static final int RARITY_UNCOMMON   = 1;
+    private static final int RARITY_RARE       = 2;
+    private static final int RARITY_ULTRA_RARE = 3;
+    private static final int RARITY_ILLUS_RARE = 4;
+    private static final int RARITY_COSMOS     = 5;
+    private static final int RARITY_HYPER      = 6;
 
     private int     WIN_W, WIN_H;
     private long    window;
     private int     holoProg, shadowProg, flatProg;
     private int     vaoQuad;
     private int[]   texPacks = new int[6];
-    private int     texBack;
+    private int     texBack, texSparkle, texGold;
     private int[]   cardTextures;
-    private int[]   deck = new int[CARD_COUNT];
+    private int[]   deck         = new int[CARD_COUNT];
+    private int[]   deckRarities = new int[CARD_COUNT];
+
+    private float   uTime = 0f;
 
     private double  mouseX, mouseY;
     private boolean clickConsumed = false;
@@ -157,7 +178,9 @@ public class PokemonCard {
                 texPacks[i] = loadTexture("packs/prismatic_evolutions.jpg");
             }
         }
-        texBack = loadTexture("back_card.jpg");
+        texBack    = loadTexture("back_card.jpg");
+        texSparkle = loadTextureOrFallback("textures/sparkle.png", generateSparkleTexture());
+        texGold    = loadTextureOrFallback("textures/gold.png",    generateGoldTexture());
 
         for (int i = 0; i < PACK_COUNT; i++) packZArr[i] = PACK_Z;
     }
@@ -168,6 +191,7 @@ public class PokemonCard {
             long now = System.nanoTime();
             float dt = Math.min((now - prev) / 1e9f, 0.05f);
             prev = now;
+            uTime += dt;
             update(dt);
             render();
             glfwSwapBuffers(window);
@@ -360,8 +384,11 @@ public class PokemonCard {
 
     private void generateRandomDeck() {
         java.util.Random rand = new java.util.Random();
-        for (int i = 0; i < CARD_COUNT; i++)
+        int rarity = PACK_CARD_RARITY[activePack];
+        for (int i = 0; i < CARD_COUNT; i++) {
+            deckRarities[i] = rarity;
             deck[i] = cardTextures[rand.nextInt(cardTextures.length)];
+        }
     }
 
     private void render() {
@@ -400,7 +427,7 @@ public class PokemonCard {
                 PACK_W * scale * 1.2f, PACK_H * scale * 1.05f, 0.38f * alpha);
         drawHolo(proj, view, model, PACK_W, PACK_H,
                 texPacks[i], tX / MAX_TILT, tY / MAX_TILT,
-                packHov[i] ? 1f : 0f, alpha, 0.04f);
+                packHov[i] ? 1f : 0f, alpha, 0.04f, PACK_RARITY[i]);
     }
 
     private void renderCenter(float[] proj, float[] view) {
@@ -415,14 +442,14 @@ public class PokemonCard {
         drawShadow(proj, view, cx, cy - 0.08f, PACK_Z - 0.3f,
                 PACK_W * 1.2f, PACK_H * 1.05f, 0.38f);
         drawHolo(proj, view, model, PACK_W, PACK_H, texPacks[activePack],
-                0f, 0f, 0f, 1f, 0.04f);
+                0f, 0f, 0f, 1f, 0.04f, PACK_RARITY[activePack]);
     }
 
     private void renderOpening(float[] proj, float[] view) {
         if (packAlpha > 0f) {
             float[] model = makeCardModel(packShakeX, 0f, PACK_Z, 0f, 0f);
             drawHolo(proj, view, model, PACK_W, PACK_H, texPacks[activePack],
-                    0f, 0f, 0f, packAlpha, 0.04f);
+                    0f, 0f, 0f, packAlpha, 0.04f, PACK_RARITY[activePack]);
         }
     }
 
@@ -440,7 +467,7 @@ public class PokemonCard {
             float ry = lerp((i % 2 == 0 ? 15f : -15f), 0f, et);
             float cardAlpha = Math.min(cardDealT[i] * 4f, 1f);
             float[] model = makeCardModel(cx, cy, cz, rx, ry);
-            drawHolo(proj, view, model, CARD_W, CARD_H, texBack, 0f, 0f, 0f, cardAlpha, 0.045f);
+            drawHolo(proj, view, model, CARD_W, CARD_H, texBack, 0f, 0f, 0f, cardAlpha, 0.045f, RARITY_COMMON);
         }
     }
 
@@ -451,12 +478,14 @@ public class PokemonCard {
             float offY = -i * 0.008f;
             float offZ = CARD_Z_REST - i * 0.005f;
             int deckTex = flipAngle < 90f ? deck[i] : texBack;
+            int rar = flipAngle < 90f ? deckRarities[i] : RARITY_COMMON;
             float[] model = makeCardModel(offX, offY, offZ, 0f, flipAngle);
-            drawHolo(proj, view, model, CARD_W, CARD_H, deckTex, 0f, 0f, 0f, 1f, 0.045f);
+            drawHolo(proj, view, model, CARD_W, CARD_H, deckTex, 0f, 0f, 0f, 1f, 0.045f, rar);
         }
         int tex = flipAngle < 90f ? deck[0] : texBack;
+        int topRar = flipAngle < 90f ? deckRarities[0] : RARITY_COMMON;
         float[] model = makeCardModel(0f, 0f, CARD_Z_REST, 0f, flipAngle);
-        drawHolo(proj, view, model, CARD_W, CARD_H, tex, 0f, 0f, 0f, 1f, 0.045f);
+        drawHolo(proj, view, model, CARD_W, CARD_H, tex, 0f, 0f, 0f, 1f, 0.045f, topRar);
     }
 
     private void renderCards(float[] proj, float[] view) {
@@ -472,7 +501,7 @@ public class PokemonCard {
             float offY = -tiltX * 0.001f * i;
             float offZ = cardZ - i * 0.005f;
             float[] model = makeCardModel(offX, offY, offZ, tiltX, tiltY);
-            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i], 0f, 0f, 0f, 1f, 0.045f);
+            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i], 0f, 0f, 0f, 1f, 0.045f, deckRarities[topCard + i]);
         }
 
         if (dismissing) {
@@ -482,17 +511,18 @@ public class PokemonCard {
             float dz = cardZ + et * 0.3f;
             float dr = dismissDX * et * 35f;
             float[] model = makeCardModel(dx, dy, dz, tiltX * (1f-et), tiltY * (1f-et) + dr);
-            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard], 0f, 0f, 0f, 1f - et, 0.045f);
+            drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard], 0f, 0f, 0f, 1f - et, 0.045f, deckRarities[topCard]);
         } else {
             float[] model = makeCardModel(0f, 0f, cardZ, tiltX, tiltY);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
-                    tiltX / MAX_TILT, tiltY / MAX_TILT, cardHovered ? 1f : 0f, 1f, 0.045f);
+                    tiltX / MAX_TILT, tiltY / MAX_TILT, cardHovered ? 1f : 0f, 1f, 0.045f, deckRarities[topCard]);
         }
     }
 
     private void drawHolo(float[] proj, float[] view, float[] model,
                           float w, float h, int tex,
-                          float tiltNX, float tiltNY, float hover, float alpha, float cornerR) {
+                          float tiltNX, float tiltNY, float hover, float alpha, float cornerR,
+                          int rarity) {
         glUseProgram(holoProg);
         setUniformMatrix(holoProg, "uProj",   proj);
         setUniformMatrix(holoProg, "uView",   view);
@@ -502,9 +532,17 @@ public class PokemonCard {
         setUniform1f(holoProg, "uHover",      hover);
         setUniform1f(holoProg, "uAlpha",      alpha);
         setUniform1f(holoProg, "uCornerR",    cornerR);
+        setUniform1i(holoProg, "uRarity",     rarity);
+        setUniform1f(holoProg, "uTime",       uTime);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex);
         setUniform1i(holoProg, "uTex", 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, texSparkle);
+        setUniform1i(holoProg, "uSparkle", 1);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, texGold);
+        setUniform1i(holoProg, "uGold", 2);
         glBindVertexArray(vaoQuad);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
     }
@@ -574,42 +612,143 @@ public class PokemonCard {
             #version 330 core
             in vec2 vUV; in vec3 vNormW, vPosW;
             uniform sampler2D uTex;
+            uniform sampler2D uSparkle;
+            uniform sampler2D uGold;
             uniform vec2  uTilt;
-            uniform float uHover, uAlpha, uCornerR;
+            uniform float uHover, uAlpha, uCornerR, uTime;
+            uniform int   uRarity;
             out vec4 fragColor;
 
             float roundedRect(vec2 uv, float r){
                 vec2 q = abs(uv-0.5)-(0.5-r);
                 return 1.0 - smoothstep(-0.005, 0.005, length(max(q,0.0))-r);
             }
-            vec3 holo(vec2 uv, vec2 tilt){
+            vec3 rainbow(vec2 uv, vec2 tilt){
                 vec2 s = uv + tilt*0.35;
                 float h = fract(s.x*6.0 + s.y*3.0);
                 return clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0, 0.0, 1.0);
             }
             float spec(vec2 uv, vec2 tilt){
-                float d = length(uv - (vec2(0.5)+tilt*0.6));
-                return pow(max(1.0-d*2.2, 0.0), 3.5);
+                float d = length(uv-(vec2(0.5)+tilt*0.6));
+                return pow(max(1.0-d*2.2,0.0),3.5);
             }
             float fres(vec2 uv){
-                vec2 e = min(uv, 1.0-uv);
-                return 1.0 - smoothstep(0.0, 0.18, min(e.x, e.y));
+                vec2 e = min(uv,1.0-uv);
+                return 1.0-smoothstep(0.0,0.18,min(e.x,e.y));
             }
+            float sparkleVal(vec2 uv, float t){
+                vec2 s1 = texture(uSparkle, uv*3.0 + vec2(t*0.08, t*0.05)).r * vec2(1.0);
+                float v = texture(uSparkle, uv*3.0 + vec2(t*0.08, t*0.05)).r;
+                v += texture(uSparkle, uv*5.0 - vec2(t*0.06, t*0.09)).r * 0.5;
+                return v / 1.5;
+            }
+            vec3 goldTint(vec2 uv){
+                return texture(uGold, uv).rgb;
+            }
+
             void main(){
                 vec4 base = texture(uTex, vec2(vUV.x, 1.0-vUV.y));
                 float mask = roundedRect(vUV, uCornerR);
-                vec3 rb   = holo(vUV, uTilt);
-                float tm  = length(uTilt);
-                float sp  = spec(vUV, uTilt) * (0.6 + uHover*0.4);
-                float fr  = fres(vUV) * (0.3 + tm*0.5);
-                vec3  fc  = mix(vec3(0.6,0.8,1.0), rb, 0.5);
-                vec3  col = base.rgb;
-                col = mix(col, col*1.18, tm*0.4);
-                col += rb * (0.28+uHover*0.12) * tm;
-                col += vec3(1.0)*sp*0.9;
-                col += fc*fr*0.5;
-                float vig = 1.0 - smoothstep(0.35, 0.75, length(vUV-0.5));
-                col *= 0.85 + vig*0.15;
+                float tm   = length(uTilt);
+                vec3  col  = base.rgb;
+                float vig  = 1.0 - smoothstep(0.35, 0.75, length(vUV-0.5));
+
+                if(uRarity == 0){
+                    // COMMON — matte, almost no sheen
+                    float softSpec = pow(max(1.0-length(vUV-(vec2(0.5)+uTilt*0.4))*3.0,0.0),6.0)*0.15;
+                    col += vec3(softSpec);
+                    col *= 0.92 + vig*0.08;
+
+                } else if(uRarity == 1){
+                    // UNCOMMON — satin silver shimmer
+                    float sp = spec(vUV, uTilt)*0.5;
+                    float fr = fres(vUV)*(0.2+tm*0.3);
+                    vec3 silver = vec3(0.75,0.82,0.9);
+                    col += silver * sp;
+                    col += silver * fr * 0.4;
+                    col *= 0.93 + vig*0.07;
+
+                } else if(uRarity == 2){
+                    // RARE — holo on artwork strip (top 65% of card)
+                    float artMask = smoothstep(0.28, 0.35, vUV.y);
+                    vec3 rb  = rainbow(vUV, uTilt);
+                    float sp = spec(vUV, uTilt)*(0.5+uHover*0.3);
+                    float fr = fres(vUV)*(0.25+tm*0.4);
+                    vec3 fc  = mix(vec3(0.6,0.8,1.0), rb, 0.5);
+                    col = mix(col, col*1.15, tm*0.35*artMask);
+                    col += rb*(0.22+uHover*0.1)*tm*artMask;
+                    col += vec3(1.0)*sp*0.7;
+                    col += fc*fr*0.4;
+                    col *= 0.88 + vig*0.12;
+
+                } else if(uRarity == 3){
+                    // ULTRA RARE — full card holo + animated shimmer
+                    vec3 rb  = rainbow(vUV, uTilt);
+                    float sp = spec(vUV, uTilt)*(0.6+uHover*0.4);
+                    float fr = fres(vUV)*(0.3+tm*0.5);
+                    vec3 fc  = mix(vec3(0.6,0.8,1.0), rb, 0.5);
+                    float animShimmer = sin(vUV.x*8.0 + uTime*2.0)*0.5+0.5;
+                    animShimmer *= sin(vUV.y*6.0 - uTime*1.5)*0.5+0.5;
+                    col = mix(col, col*1.18, tm*0.4);
+                    col += rb*(0.28+uHover*0.12)*tm;
+                    col += vec3(1.0)*sp*0.9;
+                    col += fc*fr*0.5;
+                    col += vec3(0.15,0.2,0.3)*animShimmer*0.12;
+                    col *= 0.85 + vig*0.15;
+
+                } else if(uRarity == 4){
+                    // ILLUS RARE — full holo + twinkling sparkle dots
+                    vec3 rb  = rainbow(vUV, uTilt);
+                    float sp = spec(vUV, uTilt)*(0.65+uHover*0.4);
+                    float fr = fres(vUV)*(0.35+tm*0.55);
+                    vec3 fc  = mix(vec3(0.7,0.85,1.0), rb, 0.6);
+                    float sparkle = sparkleVal(vUV, uTime);
+                    sparkle = pow(sparkle, 2.5) * (0.6+tm*0.8);
+                    col = mix(col, col*1.2, tm*0.4);
+                    col += rb*(0.3+uHover*0.14)*tm;
+                    col += vec3(1.0)*sp*0.9;
+                    col += fc*fr*0.55;
+                    col += vec3(0.9,0.95,1.0)*sparkle;
+                    col *= 0.85 + vig*0.15;
+
+                } else if(uRarity == 5){
+                    // COSMOS RARE — deep blue/purple holo, large slow stars
+                    vec2 cosmosTilt = uTilt*0.5;
+                    vec3 cosmosRb = rainbow(vUV + vec2(uTime*0.015,0.0), cosmosTilt);
+                    cosmosRb = mix(vec3(0.1,0.0,0.3), cosmosRb, 0.5); // bias toward purple
+                    float sp = spec(vUV, uTilt)*(0.5+uHover*0.5);
+                    float fr = fres(vUV)*(0.4+tm*0.6);
+                    float sparkle = sparkleVal(vUV*0.4, uTime*0.5);
+                    sparkle = pow(sparkle,3.0)*(0.8+tm);
+                    col = mix(col, col*1.2, 0.3);
+                    col += cosmosRb*(0.35)*max(tm,0.1);
+                    col += vec3(1.0)*sp*1.0;
+                    col += vec3(0.5,0.6,1.0)*fr*0.6;
+                    col += vec3(0.8,0.9,1.0)*sparkle*1.2;
+                    col *= 0.82 + vig*0.18;
+
+                } else {
+                    // HYPER/CROWN — gold prismatic sweep + emboss grid
+                    vec3 rb   = rainbow(vUV, uTilt);
+                    vec3 gold = goldTint(vUV*2.0);
+                    float sweep = sin((vUV.x-vUV.y)*4.0 + uTime*3.0)*0.5+0.5;
+                    float sp  = spec(vUV, uTilt)*(0.8+uHover*0.5);
+                    float fr  = fres(vUV)*(0.5+tm*0.7);
+                    float sparkle = sparkleVal(vUV, uTime*0.8);
+                    sparkle = pow(sparkle,2.0)*(0.5+tm);
+                    // emboss grid
+                    vec2 grid = abs(fract(vUV*22.0)-0.5);
+                    float emboss = smoothstep(0.45,0.5,max(grid.x,grid.y))*0.07;
+                    col = mix(col, col*1.25, 0.5);
+                    col = mix(col, col*gold*1.4, 0.45);
+                    col += rb*sweep*0.35;
+                    col += vec3(1.0,0.9,0.5)*sp*1.2;
+                    col += vec3(1.0,0.85,0.4)*fr*0.7;
+                    col += vec3(0.9,0.95,1.0)*sparkle*0.8;
+                    col -= vec3(emboss);
+                    col *= 0.82 + vig*0.18;
+                }
+
                 fragColor = vec4(col, base.a*mask*uAlpha);
             }
             """;
@@ -760,6 +899,69 @@ public class PokemonCard {
     private void setUniform1i(int p,String n,int v)  {int l=glGetUniformLocation(p,n);if(l>=0)glUniform1i(l,v);}
     private void setUniform1f(int p,String n,float v){int l=glGetUniformLocation(p,n);if(l>=0)glUniform1f(l,v);}
     private void setUniform2f(int p,String n,float x,float y){int l=glGetUniformLocation(p,n);if(l>=0)glUniform2f(l,x,y);}
+
+    private int loadTextureOrFallback(String path, int fallback) {
+        try { return loadTexture(path); }
+        catch (Exception e) { return fallback; }
+    }
+
+    private int generateSparkleTexture() {
+        int size = 256;
+        java.util.Random rand = new java.util.Random(42);
+        ByteBuffer buf = memAlloc(size * size * 4);
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                float v = 0f;
+                // scatter bright sparkle points
+                if (rand.nextFloat() < 0.018f) {
+                    v = 0.7f + rand.nextFloat() * 0.3f;
+                } else {
+                    v = rand.nextFloat() * 0.04f;
+                }
+                byte bv = (byte)(Math.min(v, 1f) * 255);
+                buf.put(bv).put(bv).put(bv).put((byte)255);
+            }
+        }
+        buf.flip();
+        int id = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        memFree(buf);
+        return id;
+    }
+
+    private int generateGoldTexture() {
+        int size = 128;
+        ByteBuffer buf = memAlloc(size * size * 4);
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                float fx = (float)x / size;
+                float fy = (float)y / size;
+                float v = (float)(Math.sin(fx * 12.0 + fy * 8.0) * 0.5 + 0.5);
+                v = 0.7f + v * 0.3f;
+                byte r = (byte)(Math.min(v * 1.0f, 1f) * 255);
+                byte g = (byte)(Math.min(v * 0.8f, 1f) * 255);
+                byte b = (byte)(Math.min(v * 0.3f, 1f) * 255);
+                buf.put(r).put(g).put(b).put((byte)255);
+            }
+        }
+        buf.flip();
+        int id = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        memFree(buf);
+        return id;
+    }
 
     private void cleanup() {
         glfwFreeCallbacks(window);
