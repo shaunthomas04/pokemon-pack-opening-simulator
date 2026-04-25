@@ -13,15 +13,13 @@ import static org.lwjgl.system.MemoryUtil.*;
 
 public class PokemonCard {
 
-    private static final int   WIN_W       = 1000;
-    private static final int   WIN_H       = 720;
     private static final float CARD_W      = 0.72f;
     private static final float CARD_H      = 1.005f;
     private static final float CARD_Z_REST = -2.8f;
     private static final float CARD_Z_HOVER= -2.4f;
-    private static final float PACK_W      = 0.82f;
-    private static final float PACK_H      = 1.35f;
-    private static final float PACK_Z      = -2.8f;
+    private static final float PACK_W      = 0.80f;
+    private static final float PACK_H      = 1.32f;
+    private static final float PACK_Z      = -4.2f;
     private static final float SK          = 14f;
     private static final float SD          = 6f;
     private static final float MAX_TILT    = 22f;
@@ -31,29 +29,42 @@ public class PokemonCard {
     private static final int   ST_FLIP     = 3;
     private static final int   ST_CARDS    = 4;
     private static final int   ST_WAIT     = 5;
+    private static final int   ST_CENTER   = 6;
+    private static final float CENTER_DUR  = 0.45f;
     private static final int   CARD_COUNT  = 10;
+    private static final int   PACK_COUNT  = 6;
     private static final float DEAL_DUR    = 0.22f;
-    private static final float OPEN_DUR    = 0.9f;
+    private static final float OPEN_DUR    = 0.75f;
     private static final float WAIT_TIME   = 10f;
     private static final float FLIP_DUR    = 0.75f;
 
+    private static final float[] PACK_X = { -1.3f, 0.0f, 1.3f,  -1.3f, 0.0f, 1.3f };
+    private static final float[] PACK_Y = {  0.75f, 0.75f, 0.75f, -0.75f, -0.75f, -0.75f };
+
+    private int     WIN_W, WIN_H;
     private long    window;
     private int     holoProg, shadowProg, flatProg;
     private int     vaoQuad;
-    private int     texCard, texPack, texBack;
-    private int[] cardTextures;          // all loaded card images
-    private int[] deck = new int[CARD_COUNT]; // current pack (10 cards)
-
+    private int[]   texPacks = new int[6];
+    private int     texBack;
+    private int[]   cardTextures;
+    private int[]   deck = new int[CARD_COUNT];
 
     private double  mouseX, mouseY;
     private boolean clickConsumed = false;
     private boolean mousePressed  = false;
 
-    private float   packTiltX, packTiltY, packVtiltX, packVtiltY;
-    private float   packZ = PACK_Z, packVz;
-    private boolean packHovered;
+    // Per-pack hover/tilt state
+    private float[] packTiltX  = new float[PACK_COUNT];
+    private float[] packTiltY  = new float[PACK_COUNT];
+    private float[] packVtiltX = new float[PACK_COUNT];
+    private float[] packVtiltY = new float[PACK_COUNT];
+    private float[] packZArr   = new float[PACK_COUNT];
+    private float[] packVz     = new float[PACK_COUNT];
+    private boolean[] packHov  = new boolean[PACK_COUNT];
 
-    // Shared deck spring — applied to the whole group in ST_CARDS
+    private int     activePack = -1; // which pack is being opened
+
     private float   tiltX, tiltY, vtiltX, vtiltY;
     private float   cardZ = CARD_Z_REST, vzCard;
     private boolean cardHovered;
@@ -61,16 +72,18 @@ public class PokemonCard {
     private int     state      = ST_PACK;
     private float   stateTimer = 0f;
 
+    private float   packCenterT = 0f;
+    private float   packStartX  = 0f;
+    private float   packStartY  = 0f;
+
     private float   openT      = 0f;
     private float   packShakeX = 0f;
     private float   packAlpha  = 1f;
-    private float   tearY      = 0f;
 
     private int     dealtCount = 0;
     private float   dealTimer  = 0f;
     private float[] cardDealT  = new float[CARD_COUNT];
 
-    // Whole-deck flip [0 = back-facing (180°) → 1 = front-facing (0°)]
     private float   deckFlipT  = 0f;
 
     private int     topCard    = 0;
@@ -87,14 +100,21 @@ public class PokemonCard {
     private void init() {
         GLFWErrorCallback.createPrint(System.err).set();
         if (!glfwInit()) throw new IllegalStateException("Cannot init GLFW");
+
+        long monitor = glfwGetPrimaryMonitor();
+        GLFWVidMode vm = glfwGetVideoMode(monitor);
+        WIN_W = vm.width();
+        WIN_H = vm.height();
+
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_SAMPLES, 4);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        window = glfwCreateWindow(WIN_W, WIN_H, "Pokemon Pack Opening", NULL, NULL);
+
+        window = glfwCreateWindow(WIN_W, WIN_H, "Pokemon Pack Opening", monitor, NULL);
         if (window == NULL) throw new RuntimeException("Failed to create window");
+
         glfwSetCursorPosCallback(window, (w, x, y) -> { mouseX = x; mouseY = y; });
         glfwSetMouseButtonCallback(window, (w, btn, action, mods) -> {
             if (btn == GLFW_MOUSE_BUTTON_LEFT) {
@@ -102,27 +122,44 @@ public class PokemonCard {
                 if (action == GLFW_PRESS) clickConsumed = false;
             }
         });
-        try (MemoryStack st = stackPush()) {
-            IntBuffer pw = st.mallocInt(1), ph = st.mallocInt(1);
-            glfwGetWindowSize(window, pw, ph);
-            GLFWVidMode vm = glfwGetVideoMode(glfwGetPrimaryMonitor());
-            glfwSetWindowPos(window, (vm.width()-pw.get(0))/2, (vm.height()-ph.get(0))/2);
-        }
+        glfwSetKeyCallback(window, (w, key, sc, action, mods) -> {
+            if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+                glfwSetWindowShouldClose(w, true);
+        });
+
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
         glfwShowWindow(window);
+
         GL.createCapabilities();
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glEnable(GL_MULTISAMPLE);
+        glViewport(0, 0, WIN_W, WIN_H);
+
         buildShaders();
         buildQuad();
-//        texCard = loadTexture("pokemon_card.jpg");
+
         cardTextures = loadAllCardTextures("cards");
-        generateRandomDeck();
-        texPack = loadTexture("packs/prismatic_evolutions.jpg");
+
+        String[] packFiles = {
+                "packs/chaos_rising.jpg",
+                "packs/ascended_heroes.jpg",
+                "packs/phantasmal_flames.jpg",
+                "packs/mega_evolution.jpg",
+                "packs/destined_rivals.jpg",
+                "packs/prismatic_evolutions.jpg"
+        };
+        for (int i = 0; i < PACK_COUNT; i++) {
+            try { texPacks[i] = loadTexture(packFiles[i]); }
+            catch (Exception e) {
+                texPacks[i] = loadTexture("packs/prismatic_evolutions.jpg");
+            }
+        }
         texBack = loadTexture("back_card.jpg");
+
+        for (int i = 0; i < PACK_COUNT; i++) packZArr[i] = PACK_Z;
     }
 
     private void loop() {
@@ -138,39 +175,89 @@ public class PokemonCard {
         }
     }
 
+    // Convert screen pixel coords to normalised [-1,1] in the projection plane at PACK_Z
+    // We just use simple [-1,1] NDC for hit-testing packs.
+    private float screenNX() { return (float)(mouseX / WIN_W) * 2f - 1f; }
+    private float screenNY() { return -((float)(mouseY / WIN_H) * 2f - 1f); }
+
+    // Convert world X at PACK_Z to NDC X (using same perspective as render)
+    private float worldToNDCX(float wx) {
+        float aspect = (float) WIN_W / WIN_H;
+        float fov = 45f;
+        float f = 1f / (float)Math.tan(Math.toRadians(fov) / 2.0);
+        // perspective: ndcX = (wx / -wz) * (f / aspect)  but wz is PACK_Z (negative)
+        return wx / (-PACK_Z) * (f / aspect);
+    }
+
+    private float worldToNDCY(float wy) {
+        float fov = 45f;
+        float f = 1f / (float)Math.tan(Math.toRadians(fov) / 2.0);
+        return wy / (-PACK_Z) * f;
+    }
+
+    // Half-extents of a pack in NDC
+    private float packHalfW() { return PACK_W / 2f / (-PACK_Z) * (1f / (float)Math.tan(Math.toRadians(45f) / 2.0)) / ((float) WIN_W / WIN_H); }
+    private float packHalfH() { return PACK_H / 2f / (-PACK_Z) * (1f / (float)Math.tan(Math.toRadians(45f) / 2.0)); }
+
+    private boolean isPackHovered(int i) {
+        float nx = screenNX();
+        float ny = screenNY();
+        float cx = worldToNDCX(PACK_X[i]);
+        float cy = worldToNDCY(PACK_Y[i]);
+        float hw = packHalfW();
+        float hh = packHalfH();
+        return Math.abs(nx - cx) < hw && Math.abs(ny - cy) < hh;
+    }
+
     private void update(float dt) {
         stateTimer += dt;
-        float nx = (float)(mouseX / WIN_W) * 2f - 1f;
-        float ny = -((float)(mouseY / WIN_H) * 2f - 1f);
+        float nx = screenNX();
+        float ny = screenNY();
         boolean clicked = mousePressed && !clickConsumed;
 
         switch (state) {
             case ST_PACK: {
-                packHovered = Math.abs(nx) < 0.38f && Math.abs(ny) < 0.65f;
-                float targetTX = packHovered ?  ny * MAX_TILT : 0f;
-                float targetTY = packHovered ? -nx * MAX_TILT : 0f;
-                float axX = SK*(targetTX-packTiltX) - SD*packVtiltX;
-                float axY = SK*(targetTY-packTiltY) - SD*packVtiltY;
-                packVtiltX += axX*dt; packTiltX += packVtiltX*dt;
-                packVtiltY += axY*dt; packTiltY += packVtiltY*dt;
-                float tz = packHovered ? PACK_Z + 0.35f : PACK_Z;
-                float az = SK*(tz-packZ) - SD*packVz;
-                packVz += az*dt; packZ += packVz*dt;
-                if (clicked && packHovered) {
-                    clickConsumed = true;
-                    generateRandomDeck();
+                for (int i = 0; i < PACK_COUNT; i++) {
+                    packHov[i] = isPackHovered(i);
+                    float targetTX = packHov[i] ?  ny * MAX_TILT : 0f;
+                    float targetTY = packHov[i] ? -nx * MAX_TILT : 0f;
+                    float axX = SK*(targetTX-packTiltX[i]) - SD*packVtiltX[i];
+                    float axY = SK*(targetTY-packTiltY[i]) - SD*packVtiltY[i];
+                    packVtiltX[i] += axX*dt; packTiltX[i] += packVtiltX[i]*dt;
+                    packVtiltY[i] += axY*dt; packTiltY[i] += packVtiltY[i]*dt;
+                    float tz = packHov[i] ? PACK_Z + 0.35f : PACK_Z;
+                    float az = SK*(tz-packZArr[i]) - SD*packVz[i];
+                    packVz[i] += az*dt; packZArr[i] += packVz[i]*dt;
+
+                    if (clicked && packHov[i]) {
+                        clickConsumed = true;
+                        activePack = i;
+                        generateRandomDeck();
+                        state = ST_CENTER;
+                        stateTimer = 0f;
+                        packCenterT = 0f;
+                        packStartX  = PACK_X[i];
+                        packStartY  = PACK_Y[i];
+                        openT = 0f; packShakeX = 0f; packAlpha = 1f;
+                    }
+                }
+                break;
+            }
+            case ST_CENTER: {
+                packCenterT = Math.min(stateTimer / CENTER_DUR, 1f);
+                if (packCenterT >= 1f) {
                     state = ST_OPENING;
                     stateTimer = 0f;
-                    openT = 0f; tearY = 0f; packShakeX = 0f; packAlpha = 1f;
+                    openT = 0f; packShakeX = 0f; packAlpha = 1f;
                 }
                 break;
             }
             case ST_OPENING: {
                 openT = Math.min(stateTimer / OPEN_DUR, 1f);
                 float t = openT;
+                // Only shake, no tear movement
                 packShakeX = (float)(Math.sin(t * 60f) * 0.04f * (1f - t));
-                tearY = ease(t) * 1.8f;
-                if (t > 0.6f) packAlpha = 1f - (t - 0.6f) / 0.4f;
+                if (t > 0.55f) packAlpha = 1f - (t - 0.55f) / 0.45f;
                 if (openT >= 1f) {
                     state = ST_DEAL;
                     stateTimer = 0f;
@@ -208,7 +295,6 @@ public class PokemonCard {
             }
             case ST_CARDS: {
                 cardHovered = (Math.abs(nx) < 0.38f && Math.abs(ny) < 0.55f);
-                // Spring drives the whole deck group together
                 float targetTX =  ny * MAX_TILT;
                 float targetTY = -nx * MAX_TILT;
                 float axX = SK*(targetTX-tiltX) - SD*vtiltX;
@@ -242,15 +328,18 @@ public class PokemonCard {
             }
             case ST_WAIT: {
                 waitTimer += dt;
-                packFadeIn = Math.max(0f, Math.min((waitTimer - (WAIT_TIME - 1f)), 1f));
-                if (waitTimer >= WAIT_TIME) {
+                if (waitTimer >= 2f) {
                     state = ST_PACK;
                     stateTimer = 0f;
-                    packAlpha = 1f; packFadeIn = 0f;
-                    packTiltX = packTiltY = packVtiltX = packVtiltY = 0f;
-                    packZ = PACK_Z; packVz = 0f;
+                    packAlpha = 1f; packFadeIn = 0f; waitTimer = 0f;
+                    for (int i = 0; i < PACK_COUNT; i++) {
+                        packTiltX[i] = packTiltY[i] = packVtiltX[i] = packVtiltY[i] = 0f;
+                        packZArr[i] = PACK_Z; packVz[i] = 0f;
+                        packHov[i] = false;
+                    }
                     tiltX = tiltY = vtiltX = vtiltY = 0f;
                     cardZ = CARD_Z_REST; vzCard = 0f;
+                    activePack = -1;
                 }
                 break;
             }
@@ -261,25 +350,18 @@ public class PokemonCard {
         java.io.File folder = new java.io.File(folderPath);
         java.io.File[] files = folder.listFiles((dir, name) ->
                 name.endsWith(".png") || name.endsWith(".jpg"));
-
-        if (files == null || files.length == 0) {
-            throw new RuntimeException("No images found in /cards");
-        }
-
+        if (files == null || files.length == 0)
+            throw new RuntimeException("No images found in /" + folderPath);
         int[] textures = new int[files.length];
-
-        for (int i = 0; i < files.length; i++) {
+        for (int i = 0; i < files.length; i++)
             textures[i] = loadTexture(files[i].getAbsolutePath());
-        }
-
         return textures;
     }
 
     private void generateRandomDeck() {
         java.util.Random rand = new java.util.Random();
-        for (int i = 0; i < CARD_COUNT; i++) {
+        for (int i = 0; i < CARD_COUNT; i++)
             deck[i] = cardTextures[rand.nextInt(cardTextures.length)];
-        }
     }
 
     private void render() {
@@ -289,56 +371,69 @@ public class PokemonCard {
         float[] proj = makePerspective(45f, aspect, 0.1f, 100f);
         float[] view = identity();
         switch (state) {
-            case ST_PACK    -> renderPack(proj, view, 1f, packTiltX, packTiltY, packZ);
+            case ST_PACK    -> renderAllPacks(proj, view, 1f);
+            case ST_CENTER  -> renderCenter(proj, view);
             case ST_OPENING -> renderOpening(proj, view);
             case ST_DEAL    -> renderDeal(proj, view);
             case ST_FLIP    -> renderFlip(proj, view);
             case ST_CARDS   -> renderCards(proj, view);
-            case ST_WAIT    -> { if (packFadeIn > 0f) renderPack(proj, view, packFadeIn, 0f, 0f, PACK_Z); }
+            case ST_WAIT    -> renderAllPacks(proj, view, 1f);
         }
     }
 
-    private void renderPack(float[] proj, float[] view, float alpha,
-                            float tX, float tY, float pz) {
-        float[] model = makeCardModel(0f, 0f, pz, tX, tY);
-        float scale = packHovered ? 1.04f : 1f;
+    private void renderAllPacks(float[] proj, float[] view, float alpha) {
+        for (int i = 0; i < PACK_COUNT; i++) renderOnePack(proj, view, i, alpha);
+    }
+
+    private void renderAllPacksExcept(float[] proj, float[] view, float alpha, int skip) {
+        for (int i = 0; i < PACK_COUNT; i++) if (i != skip) renderOnePack(proj, view, i, alpha);
+    }
+
+    private void renderOnePack(float[] proj, float[] view, int i, float alpha) {
+        float tX = (state == ST_WAIT) ? 0f : packTiltX[i];
+        float tY = (state == ST_WAIT) ? 0f : packTiltY[i];
+        float pz = (state == ST_WAIT) ? PACK_Z : packZArr[i];
+        float scale = packHov[i] ? 1.04f : 1f;
+        float[] model = makeCardModel(PACK_X[i], PACK_Y[i], pz, tX, tY);
         model = mul4(model, makeScale(scale, scale, 1f));
-        drawShadow(proj, view, 0f, -0.08f, PACK_Z - 0.3f,
+        drawShadow(proj, view, PACK_X[i], PACK_Y[i] - 0.08f, PACK_Z - 0.3f,
                 PACK_W * scale * 1.2f, PACK_H * scale * 1.05f, 0.38f * alpha);
         drawHolo(proj, view, model, PACK_W, PACK_H,
-                texPack, tX / MAX_TILT, tY / MAX_TILT, packHovered ? 1f : 0f, alpha, 0.04f);
+                texPacks[i], tX / MAX_TILT, tY / MAX_TILT,
+                packHov[i] ? 1f : 0f, alpha, 0.04f);
+    }
+
+    private void renderCenter(float[] proj, float[] view) {
+        float et = ease(packCenterT);
+        float otherAlpha = 1f - et;
+        for (int i = 0; i < PACK_COUNT; i++) {
+            if (i != activePack) renderOnePack(proj, view, i, otherAlpha);
+        }
+        float cx = lerp(packStartX, 0f, et);
+        float cy = lerp(packStartY, 0f, et);
+        float[] model = makeCardModel(cx, cy, PACK_Z, 0f, 0f);
+        drawShadow(proj, view, cx, cy - 0.08f, PACK_Z - 0.3f,
+                PACK_W * 1.2f, PACK_H * 1.05f, 0.38f);
+        drawHolo(proj, view, model, PACK_W, PACK_H, texPacks[activePack],
+                0f, 0f, 0f, 1f, 0.04f);
     }
 
     private void renderOpening(float[] proj, float[] view) {
         if (packAlpha > 0f) {
             float[] model = makeCardModel(packShakeX, 0f, PACK_Z, 0f, 0f);
-            drawHolo(proj, view, model, PACK_W, PACK_H, texPack, 0f, 0f, 0f, packAlpha, 0.04f);
-        }
-        if (tearY < 1.8f && packAlpha > 0f) {
-            float tearAlpha = packAlpha * (1f - tearY / 1.8f);
-            float[] tm = makeTranslate(packShakeX * 1.5f, tearY, PACK_Z + 0.01f);
-            float[] ts = makeScale(PACK_W, PACK_H * 0.3f, 1f);
-            glUseProgram(flatProg);
-            setUniformMatrix(flatProg, "uProj", proj);
-            setUniformMatrix(flatProg, "uView", view);
-            setUniformMatrix(flatProg, "uModel", mul4(tm, ts));
-            setUniform1f(flatProg, "uAlpha", tearAlpha);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, texPack);
-            setUniform1i(flatProg, "uTex", 0);
-            glBindVertexArray(vaoQuad);
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+            drawHolo(proj, view, model, PACK_W, PACK_H, texPacks[activePack],
+                    0f, 0f, 0f, packAlpha, 0.04f);
         }
     }
 
-    // All cards deal face-down (showing back), stacking up as a single deck.
     private void renderDeal(float[] proj, float[] view) {
         for (int i = dealtCount - 1; i >= 0; i--) {
             float et = ease(cardDealT[i]);
             float stackX = (i % 3 - 1) * 0.012f;
             float stackY = (i % 2 == 0 ? 1f : -1f) * 0.008f * i;
             float stackZ = CARD_Z_REST - i * 0.005f;
-            float cx = lerp(0f, stackX, et);
+            float srcX   = 0f;
+            float cx = lerp(srcX, stackX, et);
             float cy = lerp(0f, stackY, et) + (float)Math.sin(cardDealT[i] * Math.PI) * 0.4f;
             float cz = lerp(PACK_Z + 0.5f, stackZ, et);
             float rx = lerp(30f, 0f, et);
@@ -349,27 +444,21 @@ public class PokemonCard {
         }
     }
 
-    // The whole settled deck flips from back (180°) to front (0°) as one unit.
     private void renderFlip(float[] proj, float[] view) {
         float flipAngle = lerp(180f, 0f, ease(deckFlipT));
-        boolean showFront = flipAngle < 90f;
-//        int tex = showFront ? texCard : texBack;
-        int tex = showFront ? deck[0] : texBack;
-        // Draw back cards of stack first (they don't flip, just peek)
         for (int i = Math.min(CARD_COUNT - 1, 4); i >= 1; i--) {
             float offX = i * 0.012f;
             float offY = -i * 0.008f;
             float offZ = CARD_Z_REST - i * 0.005f;
-            float[] model = makeCardModel(offX, offY, offZ, 0f, flipAngle);
             int deckTex = flipAngle < 90f ? deck[i] : texBack;
+            float[] model = makeCardModel(offX, offY, offZ, 0f, flipAngle);
             drawHolo(proj, view, model, CARD_W, CARD_H, deckTex, 0f, 0f, 0f, 1f, 0.045f);
         }
-        // Draw top card
+        int tex = flipAngle < 90f ? deck[0] : texBack;
         float[] model = makeCardModel(0f, 0f, CARD_Z_REST, 0f, flipAngle);
         drawHolo(proj, view, model, CARD_W, CARD_H, tex, 0f, 0f, 0f, 1f, 0.045f);
     }
 
-    // Whole deck moves together via the shared tiltX/tiltY/cardZ spring.
     private void renderCards(float[] proj, float[] view) {
         int remaining = CARD_COUNT - topCard;
         if (remaining <= 0) return;
@@ -378,17 +467,14 @@ public class PokemonCard {
                 CARD_W * 1.15f, CARD_H * 1.1f,
                 0.45f + (CARD_Z_REST - cardZ) * 0.12f);
 
-        // Draw backing cards with same tilt/Z as the top so they move as one unit.
-        // Small XY offsets give depth but they ride the same spring.
         for (int i = Math.min(remaining - 1, 4); i >= 1; i--) {
-            float offX = tiltY * 0.001f * i;  // tiny lean from tilt, not independent drift
+            float offX = tiltY * 0.001f * i;
             float offY = -tiltX * 0.001f * i;
             float offZ = cardZ - i * 0.005f;
             float[] model = makeCardModel(offX, offY, offZ, tiltX, tiltY);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i], 0f, 0f, 0f, 1f, 0.045f);
         }
 
-        // Top card — dismiss animation or normal interactive tilt
         if (dismissing) {
             float et = ease(dismissT);
             float dx = dismissDX * et * 2.5f;
