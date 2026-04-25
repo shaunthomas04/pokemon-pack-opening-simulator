@@ -493,7 +493,7 @@ public class PokemonCard {
         for (int i = Math.min(CARD_COUNT - 1, 4); i >= 1; i--) {
             int tex = front ? deck[i] : texBack;
             int rar = front ? deckRarities[i] : RARITY_COMMON;
-            float[] model = makeCardModel(i * 0.012f, -i * 0.008f, CARD_Z_REST - i * 0.005f, 0f, flipAngle);
+            float[] model = makeCardModel(i * 0.012f, -i * 0.008f, CARD_Z_REST - i * 0.02f, 0f, flipAngle);
             drawHolo(proj, view, model, CARD_W, CARD_H, tex, 0f, 0f, 0f, 1f, 0.045f, rar);
         }
         float[] model = makeCardModel(0f, 0f, CARD_Z_REST, 0f, flipAngle);
@@ -509,18 +509,27 @@ public class PokemonCard {
                 CARD_W * 1.15f, CARD_H * 1.1f,
                 0.45f + (CARD_Z_REST - cardZ) * 0.12f);
 
-        for (int i = Math.min(remaining - 1, 4); i >= 1; i--) {
-            float[] model = makeCardModel(
-                    tiltY * 0.001f * i, -tiltX * 0.001f * i, cardZ - i * 0.005f, tiltX, tiltY);
+        // Disable depth test and draw back-to-front (painter's algorithm).
+        // This guarantees correct ordering regardless of tilt angle,
+        // preventing back cards bleeding through the top card.
+        glDisable(GL_DEPTH_TEST);
+
+        int stackSize = Math.min(remaining, 5);
+        for (int i = stackSize - 1; i >= 1; i--) {
+            // Larger Z separation (0.02 instead of 0.005) so cards don't z-fight
+            float offZ  = cardZ - i * 0.02f;
+            float offX  = tiltY * 0.001f * i;
+            float offY  = -tiltX * 0.001f * i;
+            float[] model = makeCardModel(offX, offY, offZ, tiltX, tiltY);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i],
                     0f, 0f, 0f, 1f, 0.045f, deckRarities[topCard + i]);
         }
 
         if (dismissing) {
-            float et  = ease(dismissT);
+            float et = ease(dismissT);
             float[] model = makeCardModel(
                     dismissDX * et * 2.5f, et * 0.4f, cardZ + et * 0.3f,
-                    tiltX * (1f-et), tiltY * (1f-et) + dismissDX * et * 35f);
+                    tiltX * (1f - et), tiltY * (1f - et) + dismissDX * et * 35f);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     0f, 0f, 0f, 1f - et, 0.045f, deckRarities[topCard]);
         } else {
@@ -528,6 +537,8 @@ public class PokemonCard {
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     tiltX / MAX_TILT, tiltY / MAX_TILT, cardHovered ? 1f : 0f, 1f, 0.045f, deckRarities[topCard]);
         }
+
+        glEnable(GL_DEPTH_TEST);
     }
 
     private void drawHolo(float[] proj, float[] view, float[] model,
@@ -730,17 +741,36 @@ public class PokemonCard {
                     col *= 0.82+vig*0.18;
 
                 } else {
-                    // RARITY_PACK — glossy non-holographic finish
-                    float sp    = spec(vUV,uTilt)*(0.85+uHover*0.4);
-                    float fr    = fres(vUV)*(0.55+tm*0.65);
-                    vec2  auv   = vec2(vUV.x, vUV.y*0.35+0.5+uTilt.x*0.12);
-                    float aniso = pow(max(1.0-length(auv-vec2(0.5+uTilt.y*0.4,0.5))*1.8,0.0),2.5)*0.55;
-                    col  = mix(col,col*1.12,tm*0.3);
-                    col += vec3(sp*1.1); col += vec3(aniso);
-                    col += vec3(0.85,0.92,1.0)*fr*0.65;
-                    float v2 = 1.0-smoothstep(0.25,0.7,length(vUV-0.5));
-                    col *= 0.88+v2*0.12;
-                }
+                        // RARITY_PACK — clean gloss finish, no holo
+                        float tm2 = length(uTilt);
+                
+                        // primary specular — tight bright highlight that tracks tilt
+                        float sp = pow(max(1.0 - length(vUV - (vec2(0.5) + uTilt * 0.55)) * 2.4, 0.0), 5.0) * 0.9;
+                
+                        // secondary broad fill light from opposite side
+                        float sp2 = pow(max(1.0 - length(vUV - (vec2(0.5) - uTilt * 0.4)) * 3.2, 0.0), 2.5) * 0.18;
+                
+                        // Fresnel rim — cool white glow at edges, stronger when tilted
+                        vec2  edgeDist = min(vUV, 1.0 - vUV);
+                        float rim = 1.0 - smoothstep(0.0, 0.22, min(edgeDist.x, edgeDist.y));
+                        rim *= (0.4 + tm2 * 0.8);
+                
+                        // horizontal gloss band — mimics the foil crease running across a real pack
+                        float bandY   = vUV.y + uTilt.x * 0.18;
+                        float band    = exp(-pow((bandY - 0.62) * 9.0, 2.0)) * 0.22;
+                
+                        // subtle overall brightness lift when hovered
+                        col = mix(col, col * 1.08, tm2 * 0.35 + uHover * 0.12);
+                
+                        col += vec3(1.0) * sp;
+                        col += vec3(0.88, 0.93, 1.0) * sp2;
+                        col += vec3(0.9, 0.95, 1.0) * rim * 0.5;
+                        col += vec3(1.0) * band;
+                
+                        // gentle vignette to ground the card
+                        float v2 = 1.0 - smoothstep(0.2, 0.72, length(vUV - 0.5));
+                        col *= 0.9 + v2 * 0.1;
+                    }
 
                 fragColor = vec4(col, base.a*mask*uAlpha);
             }
