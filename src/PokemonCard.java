@@ -42,24 +42,62 @@ public class PokemonCard {
     private static final float[] PACK_X = { -1.3f, 0.0f, 1.3f, -1.3f, 0.0f, 1.3f };
     private static final float[] PACK_Y = {  0.75f, 0.75f, 0.75f, -0.75f, -0.75f, -0.75f };
 
-    // All packs use the glossy pack shader (rarity 7)
-    private static final int RARITY_COMMON     = 0;
-    private static final int RARITY_UNCOMMON   = 1;
-    private static final int RARITY_RARE       = 2;
-    private static final int RARITY_ULTRA_RARE = 3;
-    private static final int RARITY_ILLUS_RARE = 4;
-    private static final int RARITY_COSMOS     = 5;
-    private static final int RARITY_HYPER      = 6;
-    private static final int RARITY_PACK       = 7;
+    // Rarity tiers — match folder names and shader branches
+    private static final int RARITY_ENERGY          = 0; // shader: common (flat)
+    private static final int RARITY_ENERGY_HOLO     = 1; // shader: uncommon (silver shimmer)
+    private static final int RARITY_COMMON           = 2; // shader: common
+    private static final int RARITY_UNCOMMON         = 3; // shader: uncommon
+    private static final int RARITY_RARE             = 4; // shader: rare (artwork holo)
+    private static final int RARITY_DOUBLE_RARE      = 5; // shader: ultra rare
+    private static final int RARITY_ART_RARE         = 6; // shader: illus rare (sparkle)
+    private static final int RARITY_SPECIAL_ART_RARE = 7; // shader: cosmos
+    private static final int RARITY_HYPER            = 8; // shader: hyper (gold)
+    private static final int RARITY_PACK             = 9; // shader: pack gloss
+    private static final int RARITY_COUNT            = 9; // excludes RARITY_PACK
 
-    // Cards drawn from each pack get this rarity shader
-    private static final int[] PACK_CARD_RARITY = {
-            RARITY_COMMON,     // chaos_rising
-            RARITY_UNCOMMON,   // ascended_heroes
-            RARITY_RARE,       // phantasmal_flames
-            RARITY_ULTRA_RARE, // mega_evolution
-            RARITY_ILLUS_RARE, // destined_rivals
-            RARITY_HYPER       // prismatic_evolutions
+    // Map each rarity tier to its visual shader branch (0-7 as before)
+    private static final int[] RARITY_TO_SHADER = {
+            0, // ENERGY          → common/matte
+            1, // ENERGY_HOLO     → satin silver
+            0, // COMMON          → common/matte
+            1, // UNCOMMON        → satin silver
+            2, // RARE            → artwork holo
+            3, // DOUBLE_RARE     → full holo + shimmer
+            4, // ART_RARE        → sparkle
+            5, // SPECIAL_ART_RARE→ cosmos
+            6, // HYPER           → gold prismatic
+    };
+
+    // Set names — index matches PACK_X/Y order
+    private static final String[] SET_NAMES = {
+            "chaos_rising",
+            "ascended_heroes",
+            "phantasmal_flames",
+            "mega_evolution",
+            "destined_rivals",
+            "prismatic_evolutions"
+    };
+
+    // Subfolder names per rarity tier (must match folder structure)
+    private static final String[] RARITY_FOLDERS = {
+            "energy", "energy", "common", "uncommon",
+            "rare", "double_rare", "art_rare", "special_art_rare", "hyper"
+    };
+
+    // Pull rate table: [slot 0-9][rarity] = weight (sum per slot = 100)
+    // Slot 0 = energy, slot 9 = guaranteed holo
+    private static final int[][] PULL_WEIGHTS = {
+            // en    eH    cm     uc    ra    dr    ar   sar    hy
+            { 8500, 1500,    0,    0,    0,    0,    0,    0,    0 }, // slot 0 — energy (85/15)
+            {    0,    0, 9999,    1,    0,    0,    0,    0,    0 }, // slot 1 — virtually all common
+            {    0,    0, 9999,    1,    0,    0,    0,    0,    0 }, // slot 2 — virtually all common
+            {    0,    0, 9000, 1000,    0,    0,    0,    0,    0 }, // slot 3 — common/uncommon
+            {    0,    0,    0, 9000,  999,    1,    0,    0,    0 }, // slot 4 — uncommon, tiny rare chance
+            {    0,    0,    0, 2500, 6857,  571,   71,    1,    0 }, // slot 5 — rare-weighted, 2.5% star
+            {    0,    0,    0,    0, 6000, 3000,  857,  136,    7 }, // slot 6 — rare/double rare, 1% star
+            {    0,    0,    0,    0,    0, 5000, 3333,  595,   72 }, // slot 7 — 2.5% any star
+            {    0,    0,    0,    0,    0, 4000, 3500, 2000,  500 }, // slot 8 — higher star chance
+            {    0,    0,    0,    0,    0, 5000, 3500, 1447,   53 }, // slot 9 — guaranteed holo, crown ~0.053%
     };
 
     private int     WIN_W, WIN_H;
@@ -68,9 +106,10 @@ public class PokemonCard {
     private int     vaoQuad;
     private int[]   texPacks      = new int[PACK_COUNT];
     private int     texBack, texSparkle, texGold;
-    private int[]   cardTextures;
+    // [set][rarity] → array of texture IDs
+    private int[][][] setCardTextures = new int[PACK_COUNT][RARITY_COUNT][];
     private int[]   deck          = new int[CARD_COUNT];
-    private int[]   deckRarities  = new int[CARD_COUNT];
+    private int[]   deckRarities  = new int[CARD_COUNT]; // stores RARITY_TO_SHADER index
     private float   uTime         = 0f;
 
     private double  mouseX, mouseY;
@@ -115,7 +154,6 @@ public class PokemonCard {
     private float   dismissDX  = 0f;
 
     private float   waitTimer  = 0f;
-    private float   packFadeIn = 0f;
 
     public static void main(String[] a) { new PokemonCard().run(); }
     private void run() { init(); loop(); cleanup(); }
@@ -164,7 +202,7 @@ public class PokemonCard {
         buildShaders();
         buildQuad();
 
-        cardTextures = loadAllCardTextures("cards");
+        loadAllSetTextures();
 
         String[] packFiles = {
                 "packs/chaos_rising.jpg",
@@ -207,35 +245,32 @@ public class PokemonCard {
     private float screenNX() { return (float)(mouseX / WIN_W) * 2f - 1f; }
     private float screenNY() { return -((float)(mouseY / WIN_H) * 2f - 1f); }
 
-    private float worldToNDCX(float wx, float wz) {
+    private float worldToNDCX(float wx) {
         float aspect = (float) WIN_W / WIN_H;
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return wx / (-wz) * (f / aspect);
+        return wx / (-PACK_Z) * (f / aspect);
     }
 
-    private float worldToNDCY(float wy, float wz) {
+    private float worldToNDCY(float wy) {
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return wy / (-wz) * f;
+        return wy / (-PACK_Z) * f;
     }
 
-    private float packHalfW(float wz) {
+    private float packHalfW() {
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return PACK_W / 2f / (-wz) * f / ((float) WIN_W / WIN_H);
+        return PACK_W / 2f / (-PACK_Z) * f / ((float) WIN_W / WIN_H);
     }
 
-    private float packHalfH(float wz) {
+    private float packHalfH() {
         float f = 1f / (float)Math.tan(Math.toRadians(45f) / 2.0);
-        return PACK_H / 2f / (-wz) * f;
+        return PACK_H / 2f / (-PACK_Z) * f;
     }
 
     private boolean isPackHovered(int i) {
         float nx = screenNX(), ny = screenNY();
-        float wz = packZArr[i];  // use actual current Z, not constant PACK_Z
-        float cx = worldToNDCX(PACK_X[i], wz);
-        float cy = worldToNDCY(PACK_Y[i], wz);
-        float hw = packHalfW(wz);
-        float hh = packHalfH(wz);
-        return Math.abs(nx - cx) < hw && Math.abs(ny - cy) < hh;
+        float cx = worldToNDCX(PACK_X[i]);
+        float cy = worldToNDCY(PACK_Y[i]);
+        return Math.abs(nx - cx) < packHalfW() && Math.abs(ny - cy) < packHalfH();
     }
 
     private void resetPackState() {
@@ -374,16 +409,12 @@ public class PokemonCard {
                 break;
             }
             case ST_WAIT: {
+                // Render nothing — just wait a moment then snap back
                 waitTimer += dt;
-                // blank screen for 0.4s, then fade packs in over 0.8s
-                float fadeStart = 0.4f;
-                float fadeDur   = 0.8f;
-                packFadeIn = Math.max(0f, Math.min((waitTimer - fadeStart) / fadeDur, 1f));
-                if (waitTimer >= fadeStart + fadeDur) {
+                if (waitTimer >= 1.2f) {
                     state = ST_PACK;
                     stateTimer = 0f;
                     waitTimer  = 0f;
-                    packFadeIn = 0f;
                     activePack = -1;
                     resetPackState();
                     tiltX = tiltY = vtiltX = vtiltY = 0f;
@@ -394,24 +425,53 @@ public class PokemonCard {
         }
     }
 
-    private int[] loadAllCardTextures(String folderPath) {
-        java.io.File folder = new java.io.File(folderPath);
-        java.io.File[] files = folder.listFiles((dir, name) ->
-                name.endsWith(".png") || name.endsWith(".jpg"));
-        if (files == null || files.length == 0)
-            throw new RuntimeException("No images found in /" + folderPath);
-        int[] textures = new int[files.length];
-        for (int i = 0; i < files.length; i++)
-            textures[i] = loadTexture(files[i].getAbsolutePath());
-        return textures;
+    private void loadAllSetTextures() {
+        for (int s = 0; s < PACK_COUNT; s++) {
+            for (int r = 0; r < RARITY_COUNT; r++) {
+                String path = "cards/" + SET_NAMES[s] + "/" + RARITY_FOLDERS[r];
+                java.io.File folder = new java.io.File(path);
+                java.io.File[] files = folder.listFiles((dir, name) ->
+                        name.endsWith(".jpg") || name.endsWith(".png"));
+                if (files == null || files.length == 0) {
+                    setCardTextures[s][r] = new int[0];
+                } else {
+                    setCardTextures[s][r] = new int[files.length];
+                    for (int i = 0; i < files.length; i++)
+                        setCardTextures[s][r][i] = loadTexture(files[i].getAbsolutePath());
+                }
+            }
+        }
+    }
+
+    private int pickCard(java.util.Random rand, int set, int rarity) {
+        for (int r = rarity; r >= 0; r--) {
+            int[] pool = setCardTextures[set][r];
+            if (pool.length > 0) return pool[rand.nextInt(pool.length)];
+        }
+        for (int r = rarity + 1; r < RARITY_COUNT; r++) {
+            int[] pool = setCardTextures[set][r];
+            if (pool.length > 0) return pool[rand.nextInt(pool.length)];
+        }
+        return texBack;
+    }
+
+    private int rollRarity(java.util.Random rand, int slot) {
+        int[] weights = PULL_WEIGHTS[slot];
+        int total = 0; for (int w : weights) total += w;
+        int roll = rand.nextInt(total), cumulative = 0;
+        for (int r = 0; r < weights.length; r++) {
+            cumulative += weights[r];
+            if (roll < cumulative) return r;
+        }
+        return weights.length - 1;
     }
 
     private void generateRandomDeck() {
         java.util.Random rand = new java.util.Random();
-        int rarity = PACK_CARD_RARITY[activePack];
         for (int i = 0; i < CARD_COUNT; i++) {
-            deckRarities[i] = rarity;
-            deck[i] = cardTextures[rand.nextInt(cardTextures.length)];
+            int rarity      = rollRarity(rand, i);
+            deck[i]         = pickCard(rand, activePack, rarity);
+            deckRarities[i] = RARITY_TO_SHADER[rarity];
         }
     }
 
@@ -428,24 +488,12 @@ public class PokemonCard {
             case ST_DEAL    -> renderDeal(proj, view);
             case ST_FLIP    -> renderFlip(proj, view);
             case ST_CARDS   -> renderCards(proj, view);
-            case ST_WAIT -> { if (packFadeIn > 0f) renderAllPacksFaded(proj, view, packFadeIn); }
+            case ST_WAIT    -> {} // render nothing — blank screen briefly before packs return
         }
     }
 
     private void renderAllPacks(float[] proj, float[] view) {
         for (int i = 0; i < PACK_COUNT; i++) renderOnePack(proj, view, i, 1f);
-    }
-
-    private void renderAllPacksFaded(float[] proj, float[] view, float alpha) {
-        for (int i = 0; i < PACK_COUNT; i++) {
-            if (alpha <= 0f) return;
-            float tX = 0f, tY = 0f, pz = PACK_Z;
-            float[] model = makeCardModel(PACK_X[i], PACK_Y[i], pz, tX, tY);
-            drawShadow(proj, view, PACK_X[i], PACK_Y[i] - 0.08f, PACK_Z - 0.3f,
-                    PACK_W * 1.2f, PACK_H * 1.05f, 0.38f * alpha);
-            drawHolo(proj, view, model, PACK_W, PACK_H, texPacks[i],
-                    0f, 0f, 0f, alpha, 0.04f, RARITY_PACK);
-        }
     }
 
     private void renderOnePack(float[] proj, float[] view, int i, float alpha) {
@@ -509,16 +557,25 @@ public class PokemonCard {
 
     private void renderFlip(float[] proj, float[] view) {
         float flipAngle = lerp(180f, 0f, ease(deckFlipT));
-        boolean front   = flipAngle < 90f;
+        boolean topShowsFront = flipAngle < 90f;
+
+        // Backing cards always show back until the entire flip is done
+        // This prevents glimpsing a different card's front mid-animation
+        glDisable(GL_DEPTH_TEST);
         for (int i = Math.min(CARD_COUNT - 1, 4); i >= 1; i--) {
-            int tex = front ? deck[i] : texBack;
-            int rar = front ? deckRarities[i] : RARITY_COMMON;
-            float[] model = makeCardModel(i * 0.012f, -i * 0.008f, CARD_Z_REST - i * 0.02f, 0f, flipAngle);
-            drawHolo(proj, view, model, CARD_W, CARD_H, tex, 0f, 0f, 0f, 1f, 0.045f, rar);
+            float[] model = makeCardModel(i * 0.012f, -i * 0.008f,
+                    CARD_Z_REST - i * 0.02f, 0f, flipAngle);
+            drawHolo(proj, view, model, CARD_W, CARD_H, texBack,
+                    0f, 0f, 0f, 1f, 0.045f, RARITY_COMMON);
         }
+
+        // Top card flips normally — back → front at 90°
+        int tex = topShowsFront ? deck[0] : texBack;
+        int rar = topShowsFront ? deckRarities[0] : RARITY_COMMON;
         float[] model = makeCardModel(0f, 0f, CARD_Z_REST, 0f, flipAngle);
-        drawHolo(proj, view, model, CARD_W, CARD_H, front ? deck[0] : texBack,
-                0f, 0f, 0f, 1f, 0.045f, front ? deckRarities[0] : RARITY_COMMON);
+        drawHolo(proj, view, model, CARD_W, CARD_H, tex,
+                0f, 0f, 0f, 1f, 0.045f, rar);
+        glEnable(GL_DEPTH_TEST);
     }
 
     private void renderCards(float[] proj, float[] view) {
@@ -529,27 +586,18 @@ public class PokemonCard {
                 CARD_W * 1.15f, CARD_H * 1.1f,
                 0.45f + (CARD_Z_REST - cardZ) * 0.12f);
 
-        // Disable depth test and draw back-to-front (painter's algorithm).
-        // This guarantees correct ordering regardless of tilt angle,
-        // preventing back cards bleeding through the top card.
-        glDisable(GL_DEPTH_TEST);
-
-        int stackSize = Math.min(remaining, 5);
-        for (int i = stackSize - 1; i >= 1; i--) {
-            // Larger Z separation (0.02 instead of 0.005) so cards don't z-fight
-            float offZ  = cardZ - i * 0.02f;
-            float offX  = tiltY * 0.001f * i;
-            float offY  = -tiltX * 0.001f * i;
-            float[] model = makeCardModel(offX, offY, offZ, tiltX, tiltY);
+        for (int i = Math.min(remaining - 1, 4); i >= 1; i--) {
+            float[] model = makeCardModel(
+                    tiltY * 0.001f * i, -tiltX * 0.001f * i, cardZ - i * 0.005f, tiltX, tiltY);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i],
                     0f, 0f, 0f, 1f, 0.045f, deckRarities[topCard + i]);
         }
 
         if (dismissing) {
-            float et = ease(dismissT);
+            float et  = ease(dismissT);
             float[] model = makeCardModel(
                     dismissDX * et * 2.5f, et * 0.4f, cardZ + et * 0.3f,
-                    tiltX * (1f - et), tiltY * (1f - et) + dismissDX * et * 35f);
+                    tiltX * (1f-et), tiltY * (1f-et) + dismissDX * et * 35f);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     0f, 0f, 0f, 1f - et, 0.045f, deckRarities[topCard]);
         } else {
@@ -557,8 +605,6 @@ public class PokemonCard {
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     tiltX / MAX_TILT, tiltY / MAX_TILT, cardHovered ? 1f : 0f, 1f, 0.045f, deckRarities[topCard]);
         }
-
-        glEnable(GL_DEPTH_TEST);
     }
 
     private void drawHolo(float[] proj, float[] view, float[] model,
@@ -574,7 +620,7 @@ public class PokemonCard {
         setUniform1f(holoProg, "uHover",     hover);
         setUniform1f(holoProg, "uAlpha",     alpha);
         setUniform1f(holoProg, "uCornerR",   cornerR);
-        setUniform1i(holoProg, "uRarity",    rarity);
+        setUniform1i(holoProg, "uRarity",    rarity == RARITY_PACK ? 7 : rarity);
         setUniform1f(holoProg, "uTime",      uTime);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex);
@@ -761,35 +807,27 @@ public class PokemonCard {
                     col *= 0.82+vig*0.18;
 
                 } else {
-                        // RARITY_PACK — clean gloss finish, no holo
+                        // RARITY_PACK — subtle gloss, easy to read
                         float tm2 = length(uTilt);
                 
-                        // primary specular — tight bright highlight that tracks tilt
-                        float sp = pow(max(1.0 - length(vUV - (vec2(0.5) + uTilt * 0.55)) * 2.4, 0.0), 5.0) * 0.9;
+                        float sp = pow(max(1.0 - length(vUV - (vec2(0.5) + uTilt * 0.5)) * 2.8, 0.0), 6.0) * 0.5;
+                        float sp2 = pow(max(1.0 - length(vUV - (vec2(0.5) - uTilt * 0.35)) * 3.5, 0.0), 3.0) * 0.08;
                 
-                        // secondary broad fill light from opposite side
-                        float sp2 = pow(max(1.0 - length(vUV - (vec2(0.5) - uTilt * 0.4)) * 3.2, 0.0), 2.5) * 0.18;
+                        vec2 edgeDist = min(vUV, 1.0 - vUV);
+                        float rim = 1.0 - smoothstep(0.0, 0.2, min(edgeDist.x, edgeDist.y));
+                        rim *= (0.15 + tm2 * 0.3);
                 
-                        // Fresnel rim — cool white glow at edges, stronger when tilted
-                        vec2  edgeDist = min(vUV, 1.0 - vUV);
-                        float rim = 1.0 - smoothstep(0.0, 0.22, min(edgeDist.x, edgeDist.y));
-                        rim *= (0.4 + tm2 * 0.8);
+                        float bandY = vUV.y + uTilt.x * 0.15;
+                        float band  = exp(-pow((bandY - 0.65) * 12.0, 2.0)) * 0.10;
                 
-                        // horizontal gloss band — mimics the foil crease running across a real pack
-                        float bandY   = vUV.y + uTilt.x * 0.18;
-                        float band    = exp(-pow((bandY - 0.62) * 9.0, 2.0)) * 0.22;
-                
-                        // subtle overall brightness lift when hovered
-                        col = mix(col, col * 1.08, tm2 * 0.35 + uHover * 0.12);
-                
+                        col = mix(col, col * 1.04, tm2 * 0.2 + uHover * 0.06);
                         col += vec3(1.0) * sp;
-                        col += vec3(0.88, 0.93, 1.0) * sp2;
-                        col += vec3(0.9, 0.95, 1.0) * rim * 0.5;
+                        col += vec3(0.9, 0.94, 1.0) * sp2;
+                        col += vec3(0.9, 0.95, 1.0) * rim * 0.3;
                         col += vec3(1.0) * band;
                 
-                        // gentle vignette to ground the card
-                        float v2 = 1.0 - smoothstep(0.2, 0.72, length(vUV - 0.5));
-                        col *= 0.9 + v2 * 0.1;
+                        float v2 = 1.0 - smoothstep(0.15, 0.75, length(vUV - 0.5));
+                        col *= 0.95 + v2 * 0.05;
                     }
 
                 fragColor = vec4(col, base.a*mask*uAlpha);
