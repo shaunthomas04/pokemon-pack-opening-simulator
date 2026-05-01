@@ -78,26 +78,53 @@ public class PokemonCard {
             "prismatic_evolutions"
     };
 
-    // Subfolder names per rarity tier (must match folder structure)
-    private static final String[] RARITY_FOLDERS = {
-            "energy", "energy", "common", "uncommon",
-            "rare", "double_rare", "art_rare", "special_art_rare", "hyper"
+    private static final String[][] RARITY_FOLDER_PATHS = {
+            // { primary path, fallback path or null }
+            // ENERGY (0)
+            { "energy" },
+            // ENERGY_HOLO (1) — same folder, holo is determined by roll not separate folder
+            { "energy" },
+            // COMMON (2)
+            { "pokemon/common", "trainer/common" },
+            // UNCOMMON (3)
+            { "pokemon/uncommon", "trainer/uncommon" },
+            // RARE (4)
+            { "pokemon/rare" },
+            // DOUBLE_RARE (5)
+            { "pokemon/double_rare", "pokemon/ultra_rare", "trainer/ultra_rare" },
+            // ART_RARE / ILLUSTRATION_RARE (6)
+            { "pokemon/illustration_rare" },
+            // SPECIAL_ART_RARE (7)
+            { "pokemon/special_illustration_rare", "trainer/special_illustration_rare" },
+            // HYPER (8)
+            { "pokemon/hyper_rare" },
     };
 
-    // Pull rate table: [slot 0-9][rarity] = weight (sum per slot = 100)
-    // Slot 0 = energy, slot 9 = guaranteed holo
     private static final int[][] PULL_WEIGHTS = {
-            // en    eH    cm     uc    ra    dr    ar   sar    hy
-            { 8500, 1500,    0,    0,    0,    0,    0,    0,    0 }, // slot 0 — energy (85/15)
-            {    0,    0, 9999,    1,    0,    0,    0,    0,    0 }, // slot 1 — virtually all common
-            {    0,    0, 9999,    1,    0,    0,    0,    0,    0 }, // slot 2 — virtually all common
-            {    0,    0, 9000, 1000,    0,    0,    0,    0,    0 }, // slot 3 — common/uncommon
-            {    0,    0,    0, 9000,  999,    1,    0,    0,    0 }, // slot 4 — uncommon, tiny rare chance
-            {    0,    0,    0, 2500, 6857,  571,   71,    1,    0 }, // slot 5 — rare-weighted, 2.5% star
-            {    0,    0,    0,    0, 6000, 3000,  857,  136,    7 }, // slot 6 — rare/double rare, 1% star
-            {    0,    0,    0,    0,    0, 5000, 3333,  595,   72 }, // slot 7 — 2.5% any star
-            {    0,    0,    0,    0,    0, 4000, 3500, 2000,  500 }, // slot 8 — higher star chance
-            {    0,    0,    0,    0,    0, 5000, 3500, 1447,   53 }, // slot 9 — guaranteed holo, crown ~0.053%
+            //   en   eH    cm    uc    ra    dr    ar   sar    hy
+
+            {10000,    0,    0,    0,    0,    0,    0,    0,    0 }, // slot 0 - energy (fixed)
+
+            {    0,    0,10000,    0,    0,    0,    0,    0,    0 }, // slot 1 - common (fixed)
+
+            {    0,    0,10000,    0,    0,    0,    0,    0,    0 }, // slot 2 - common (fixed)
+
+            {    0,    0, 9500,  500,    0,    0,    0,    0,    0 }, // slot 3 - common/uncommon (almost always common)
+
+            // ---- early "fake excitement" slot (still mostly bulk) ----
+            {    0,    0,    0, 9700,  300,    0,    0,    0,    0 }, // slot 4
+
+            // ---- REAL hit region starts here (VERY low odds) ----
+            {    0,    0,    0, 8500, 1400,  100,    0,    0,    0 }, // slot 5 - rare appearance (~10% rare max)
+
+            {    0,    0,    0, 9000,  900,   90,   10,    0,    0 }, // slot 6 - tiny AR chance (~1%)
+
+            {    0,    0,    0, 9200,  700,   80,   18,    2,    0 }, // slot 7 - AR/SAR extremely rare
+
+            {    0,    0,    0, 9500,  450,   40,    8,    2,    0 }, // slot 8 - peak hit slot (~0.1–0.3% SAR)
+
+            // ---- final slot (holo / reverse / occasional hit) ----
+            {    0,    0,    0,    0, 9000,  900,   90,    9,    1 }, // slot 9 - holo dominated, ultra rare SAR
     };
 
     private int     WIN_W, WIN_H;
@@ -428,17 +455,21 @@ public class PokemonCard {
     private void loadAllSetTextures() {
         for (int s = 0; s < PACK_COUNT; s++) {
             for (int r = 0; r < RARITY_COUNT; r++) {
-                String path = "cards/" + SET_NAMES[s] + "/" + RARITY_FOLDERS[r];
-                java.io.File folder = new java.io.File(path);
-                java.io.File[] files = folder.listFiles((dir, name) ->
-                        name.endsWith(".jpg") || name.endsWith(".png"));
-                if (files == null || files.length == 0) {
-                    setCardTextures[s][r] = new int[0];
-                } else {
-                    setCardTextures[s][r] = new int[files.length];
-                    for (int i = 0; i < files.length; i++)
-                        setCardTextures[s][r][i] = loadTexture(files[i].getAbsolutePath());
+                String[] paths = RARITY_FOLDER_PATHS[r];
+                java.util.List<Integer> texList = new java.util.ArrayList<>();
+                for (String subPath : paths) {
+                    String fullPath = "cards/" + SET_NAMES[s] + "/" + subPath;
+                    java.io.File folder = new java.io.File(fullPath);
+                    java.io.File[] files = folder.listFiles((dir, name) ->
+                            name.endsWith(".jpg") || name.endsWith(".png"));
+                    if (files != null) {
+                        for (java.io.File f : files) {
+                            try { texList.add(loadTexture(f.getAbsolutePath())); }
+                            catch (Exception e) { /* skip unloadable files */ }
+                        }
+                    }
                 }
+                setCardTextures[s][r] = texList.stream().mapToInt(Integer::intValue).toArray();
             }
         }
     }
