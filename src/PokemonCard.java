@@ -563,8 +563,7 @@ public class PokemonCard {
         // This prevents glimpsing a different card's front mid-animation
         glDisable(GL_DEPTH_TEST);
         for (int i = Math.min(CARD_COUNT - 1, 4); i >= 1; i--) {
-            float[] model = makeCardModel(i * 0.012f, -i * 0.008f,
-                    CARD_Z_REST - i * 0.02f, 0f, flipAngle);
+            float[] model = makeCardModel(i * 0.012f, -i * 0.008f, CARD_Z_REST - i * 0.02f, 0f, flipAngle);
             drawHolo(proj, view, model, CARD_W, CARD_H, texBack,
                     0f, 0f, 0f, 1f, 0.045f, RARITY_COMMON);
         }
@@ -586,18 +585,27 @@ public class PokemonCard {
                 CARD_W * 1.15f, CARD_H * 1.1f,
                 0.45f + (CARD_Z_REST - cardZ) * 0.12f);
 
-        for (int i = Math.min(remaining - 1, 4); i >= 1; i--) {
-            float[] model = makeCardModel(
-                    tiltY * 0.001f * i, -tiltX * 0.001f * i, cardZ - i * 0.005f, tiltX, tiltY);
+        // Disable depth test and draw back-to-front (painter's algorithm).
+        // This guarantees correct ordering regardless of tilt angle,
+        // preventing back cards bleeding through the top card.
+        glDisable(GL_DEPTH_TEST);
+
+        int stackSize = Math.min(remaining, 5);
+        for (int i = stackSize - 1; i >= 1; i--) {
+            // Larger Z separation (0.02 instead of 0.005) so cards don't z-fight
+            float offZ  = cardZ - i * 0.02f;
+            float offX  = tiltY * 0.001f * i;
+            float offY  = -tiltX * 0.001f * i;
+            float[] model = makeCardModel(offX, offY, offZ, tiltX, tiltY);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard + i],
                     0f, 0f, 0f, 1f, 0.045f, deckRarities[topCard + i]);
         }
 
         if (dismissing) {
-            float et  = ease(dismissT);
+            float et = ease(dismissT);
             float[] model = makeCardModel(
                     dismissDX * et * 2.5f, et * 0.4f, cardZ + et * 0.3f,
-                    tiltX * (1f-et), tiltY * (1f-et) + dismissDX * et * 35f);
+                    tiltX * (1f - et), tiltY * (1f - et) + dismissDX * et * 35f);
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     0f, 0f, 0f, 1f - et, 0.045f, deckRarities[topCard]);
         } else {
@@ -605,6 +613,8 @@ public class PokemonCard {
             drawHolo(proj, view, model, CARD_W, CARD_H, deck[topCard],
                     tiltX / MAX_TILT, tiltY / MAX_TILT, cardHovered ? 1f : 0f, 1f, 0.045f, deckRarities[topCard]);
         }
+
+        glEnable(GL_DEPTH_TEST);
     }
 
     private void drawHolo(float[] proj, float[] view, float[] model,
