@@ -70,10 +70,10 @@ public class PokemonCard {
 
     // Set names — index matches PACK_X/Y order
     private static final String[] SET_NAMES = {
-            "chaos_rising",
+            "mega_evolution",
             "ascended_heroes",
             "phantasmal_flames",
-            "mega_evolution",
+            "chaos_rising",
             "destined_rivals",
             "prismatic_evolutions"
     };
@@ -232,10 +232,10 @@ public class PokemonCard {
         loadAllSetTextures();
 
         String[] packFiles = {
-                "packs/chaos_rising.jpg",
+                "packs/mega_evolution.jpg",
                 "packs/ascended_heroes.jpg",
                 "packs/phantasmal_flames.jpg",
-                "packs/mega_evolution.jpg",
+                "packs/chaos_rising.jpg",
                 "packs/destined_rivals.jpg",
                 "packs/prismatic_evolutions.jpg"
         };
